@@ -97,8 +97,11 @@
   }
   .dropzone:hover,.dropzone.drag{border-color:var(--brand);background:var(--brand-soft);color:var(--brand-ink)}
   .dropzone .big{font-size:34px;margin-bottom:6px}
-  .split{display:grid;grid-template-columns:1.4fr 1fr;gap:20px;align-items:start}
-  @media(max-width:820px){.split{grid-template-columns:1fr}}
+  .split{display:flex;gap:20px;align-items:flex-start}
+  .split > .field{flex:1;min-width:0}
+  .split .preview-pane{flex:none}
+  #tplSplit{gap:0}
+  @media(max-width:820px){.split{flex-direction:column}.split .preview-pane{width:100%!important}}
   /* 契約書作成画面：左サイドバー（フォーマット選択）＋右作業エリア（PMGのlayout/leftと同じ構造・サイズ感） */
   .make-shell{display:flex;flex:1;min-height:0;width:100%;overflow:hidden;padding:0 calc(var(--gutter) + 16px)}
   @media(max-width:820px){.make-shell{flex-direction:column;height:auto;overflow:visible}}
@@ -404,11 +407,26 @@ async function callAI(action, payload){
 /* ============================================================
    ルーター
 ============================================================ */
+function confirmLeaveDraftIfDirty(){
+  if(state.draft && state.draft.dirty){
+    return confirm('保存されていない変更があります。このまま移動すると変更内容は失われます。移動してもよろしいですか？');
+  }
+  return true;
+}
 function go(view, arg){
+  if(state.view==='templateNew' && view!=='templateNew'){
+    if(!confirmLeaveDraftIfDirty()) return;
+  }
   state.view=view; render(view, arg);
   const app=document.getElementById('app');
   if(app) app.scrollTop=0;
 }
+window.addEventListener('beforeunload', function(e){
+  if(state.view==='templateNew' && state.draft && state.draft.dirty){
+    e.preventDefault();
+    e.returnValue='';
+  }
+});
 function render(view, arg){
   const app=document.getElementById('app');
   // home（契約書作成ダッシュボード）は高さ固定＋内部スクロール、それ以外は通常ページスクロール
@@ -854,7 +872,7 @@ function linkedGroupIds(t, g){
   const names=new Set(g.memberPropNames);
   return (t.repeatGroups||[]).filter(g2=>g2.id!==g.id && g2.memberPropNames.some(p=>names.has(p))).map(g2=>g2.id);
 }
-// 「同じ値」として結合されている項目は、どこか1箇所に入力すると他の全ての入力欄にも自動反映する。
+// 「同じ値として結合」されている項目は、どこか1箇所に入力すると他の全ての入力欄にも自動反映する。
 // - 通常項目どうしは元々1つの入力欄にまとまっているのでそのまま。
 // - 繰り返し行のメンバー項目名が、他の通常項目や別の繰り返し行のメンバーと同じ場合、
 //   同じ行番号（sourceIndex）のエントリの値と、画面に表示されている入力欄（DOM）も書き換える。
@@ -981,8 +999,8 @@ function viewTemplates(app){
     <div class="page-head">
       <h1>フォーマット管理</h1>
       <div class="row" style="gap:8px">
-        <button class="btn ghost" id="exportTplBtn" title="全フォーマットをJSONで書き出す">${icon('download',15)} エクスポート</button>
-        <button class="btn ghost" id="importTplBtn" title="JSONファイルから取り込む">${icon('uploadArrow',15)} インポート</button>
+        <button class="btn ghost" id="exportTplBtn" title="全フォーマットをJSONで書き出す">${icon('uploadArrow',15)} エクスポート</button>
+        <button class="btn ghost" id="importTplBtn" title="JSONファイルから取り込む">${icon('download',15)} インポート</button>
         <input type="file" id="importTplInput" accept=".json,application/json" style="display:none">
         <button class="btn" onclick="startTemplateNew()">＋ 新規フォーマット</button>
       </div>
@@ -1111,8 +1129,15 @@ function viewHistory(app){
 /* ============================================================
    フォーマット保存フロー
 ============================================================ */
+function markDraftDirty(){
+  if(!state.draft) return;
+  state.draft.dirty = true;
+  const el=document.getElementById('dirtyBadge');
+  if(el) el.style.display='inline-flex';
+}
 function startTemplateNew(){
-  state.draft={ name:'', fileType:null, fileBase64:null, previewHtml:'', workbook:null, variables:[], repeatGroups:[], groupSelection:[], maskMode:'add', editId:null,
+  if(!confirmLeaveDraftIfDirty()) return;
+  state.draft={ name:'', fileType:null, fileBase64:null, previewHtml:'', workbook:null, variables:[], repeatGroups:[], groupSelection:[], maskMode:'add', editId:null, dirty:false,
     role: state.companyProfile.defaultRole || '', selfLabel: state.companyProfile.defaultRole || '' };
   go('templateNew');
 }
@@ -1132,7 +1157,7 @@ async function startTemplateEdit(id){
     }),
     repeatGroups:(t.repeatGroups||[]).map(g=>({...g})),
     groupSelection:[],
-    maskMode:'add', editId:t.id,
+    maskMode:'add', editId:t.id, dirty:false,
     role: t.role || '', selfLabel: t.selfLabel || '' };
   // anchorKey は前回の編集セッション時点のキーを指しているため、
   // 変数のキーを振り直した今、そのグループの実際のメンバーを見つけて再設定する
@@ -1162,7 +1187,7 @@ function viewTemplateNew(app){
   const d=state.draft;
   const editing=!!d.editId;
   app.innerHTML = `
-    <h1 style="margin:0 0 6px">フォーマットを${editing?'編集':'保存'}</h1>
+    <h1 style="margin:0 0 6px;display:flex;align-items:center;gap:10px">フォーマットを${editing?'編集':'保存'}<span id="dirtyBadge" style="display:${d.dirty?'inline-flex':'none'};align-items:center;gap:4px;font-size:12px;font-weight:600;color:#92400E;background:#FFFBEB;border:1px solid #FDE68A;padding:3px 10px;border-radius:999px">${icon('alert',12)} 変更あり</span></h1>
     <div class="field" style="max-width:520px;margin-top:22px">
       <label class="lbl section-heading">フォーマット名</label>
       <input type="text" id="tplName" placeholder="例：業務委託契約書" value="${esc(d.name)}">
@@ -1202,14 +1227,15 @@ function viewTemplateNew(app){
     </div>`:''}
     <div id="maskArea" style="display:none;margin-top:24px"></div>
   `;
-  document.getElementById('tplName').oninput=e=>d.name=e.target.value;
+  document.getElementById('tplName').oninput=e=>{ d.name=e.target.value; markDraftDirty(); };
   document.getElementById('tplRole').onchange=e=>{
     d.role=e.target.value;
     // 自社を指す言葉が未編集（立場の値と一致 or 空）なら、選んだ立場に合わせて追従させる
     const lbl=document.getElementById('tplSelfLabel');
     if(lbl && (!lbl.value.trim() || lbl.value==='委託者' || lbl.value==='受託者')){ lbl.value=e.target.value; d.selfLabel=e.target.value; }
+    markDraftDirty();
   };
-  document.getElementById('tplSelfLabel').oninput=e=>d.selfLabel=e.target.value;
+  document.getElementById('tplSelfLabel').oninput=e=>{ d.selfLabel=e.target.value; markDraftDirty(); };
   const fireFile=f=>{ if(f) handleTemplateFile(f); };
   // 新規アップロード用ドロップゾーン
   const drop=document.getElementById('drop');
@@ -1253,6 +1279,7 @@ async function handleTemplateFile(file){
     }
     loading(false);
     const ua=document.getElementById('uploadArea'); if(ua) ua.style.display='none';
+    markDraftDirty();
     buildMaskArea();
   }catch(e){ loading(false); toast('ファイルの読み込みに失敗しました: '+e.message, true); }
 }
@@ -1262,8 +1289,8 @@ function buildMaskArea(){
   area.style.display='block';
   area.innerHTML = `
     <h2 class="section-heading">項目設定</h2>
-    <div class="split">
-      <div class="preview-pane">
+    <div class="split" id="tplSplit">
+      <div class="preview-pane" id="tplPreviewPane" style="width:${getUiSize('tplPreviewWidth',560)}px">
         <div class="pane-head">
           <span class="t">${d.fileType==='docx'?'文書プレビュー':'シートプレビュー'}</span>
           <div class="top-spacer" style="flex:1"></div>
@@ -1280,7 +1307,8 @@ function buildMaskArea(){
         </div>
         <div id="previewBody" class="${d.fileType==='docx'?'docx-preview':'xlsx-preview'}"></div>
       </div>
-      <div>
+      <div class="h-resizer" id="tplPreviewResizer"></div>
+      <div style="flex:1;min-width:280px;margin-left:14px">
         <div class="pane-head" style="border:1px solid var(--line);border-radius:12px 12px 0 0;background:#F9FAFB">
           <span class="t">変数リスト（<span id="varCount">0</span>）</span>
           <div style="flex:1"></div>
@@ -1293,7 +1321,7 @@ function buildMaskArea(){
         <div class="row end" style="margin-top:18px">
           ${d.editId
             ? '<button class="btn ghost" onclick="go(\'templates\')">キャンセル</button>'
-            : '<button class="btn ghost" onclick="startTemplateNew()">やり直す</button>'}
+            : '<button class="btn ghost" onclick="if(confirmLeaveDraftIfDirty()) startTemplateNew()">やり直す</button>'}
           <button class="btn" id="saveTplBtn">${d.editId?'上書き保存する':'このフォーマットを保存'}</button>
         </div>
       </div>
@@ -1337,6 +1365,9 @@ function buildMaskArea(){
   document.getElementById('autoDetectBtn').onclick=aiAutoMask;
   document.getElementById('aiNameBtn').onclick=aiGenerateNames;
   document.getElementById('saveTplBtn').onclick=saveTemplate;
+  attachHResizer(document.getElementById('tplPreviewResizer'), document.getElementById('tplPreviewPane'), {
+    min:340, max:1100, storageKey:'tplPreviewWidth'
+  });
   refreshVarList();
 }
 /* ---- マスクモード（鉛筆＝追加 / 消しゴム＝除去）---- */
@@ -1452,6 +1483,7 @@ function tryAddDocxMaskFromSelection(){
   }
   state.draft.variables.push({ key:uid(), originalText:text, occurrence, propName:'' });
   sel.removeAllRanges();
+  markDraftDirty();
   renderDocxPreview(body);
   applyMaskModeUI();
   refreshVarList();
@@ -1704,6 +1736,7 @@ async function addTableRow_(trEl, insertBelow){
       return [{ start: insertPos, oldLen:0, newLen: len }];
     });
     loading(false);
+    markDraftDirty();
     if(droppedNames.length) toast('注意: '+droppedNames.join('、')+' が無効になりました。再度マスクしてください。', true);
     else toast('行を追加しました');
     buildMaskArea();
@@ -1736,6 +1769,7 @@ async function deleteTableRow_(trEl){
       return [{ start: range[0], oldLen: range[1]-range[0], newLen: 0 }];
     });
     loading(false);
+    markDraftDirty();
     if(droppedNames.length) toast('注意: '+droppedNames.join('、')+' が削除した行に含まれていたため無効になりました。', true);
     else toast('行を削除しました');
     buildMaskArea();
@@ -1786,6 +1820,7 @@ async function addTableColumn_(tdEl, insertRight){
       return changedRanges;
     });
     loading(false);
+    markDraftDirty();
     if(droppedNames.length) toast('注意: '+droppedNames.join('、')+' が無効になりました。再度マスクしてください。', true);
     else toast('列を追加しました');
     buildMaskArea();
@@ -1833,6 +1868,7 @@ async function deleteTableColumn_(tdEl){
       return changedRanges;
     });
     loading(false);
+    markDraftDirty();
     if(droppedNames.length) toast('注意: '+droppedNames.join('、')+' が削除した列に含まれていたため無効になりました。', true);
     else toast('列を削除しました');
     buildMaskArea();
@@ -1974,6 +2010,7 @@ async function editParagraphText_(pEl){
     const changeRange=diffTextRange(mapOld.full, mapNew.full);
     const droppedNames=reconcileVarPositions(d, oldPositions, [changeRange], mapNew);
     loading(false);
+    markDraftDirty();
     if(droppedNames.length) toast('注意: '+droppedNames.join('、')+' が無効になりました。再度マスクしてください。', true);
     else toast('文言を修正しました');
     buildMaskArea();
@@ -2124,6 +2161,7 @@ async function createRowGroup_(memberKeys){
     memberVars.forEach(v=>{ v.repeatGroupId=groupId; v.repeatRole='member'; });
     d.repeatGroups.push({ id:groupId, kind:'row', label, memberPropNames:memberVars.map(v=>v.propName), anchorKey:first.key });
     d.groupSelection=[];
+    markDraftDirty();
     loading(false);
     if(dropped.length) toast('注意: '+dropped.join('、')+' が例示行の削除に伴い無効になりました。再度マスクしてください。', true);
     else toast('繰り返し行を設定しました');
@@ -2167,7 +2205,7 @@ function toggleCell(sheet,addr,val,td){
   const mode=d.maskMode||'add';
   if(mode==='erase'){
     // 消しゴム：マスク済みのみ解除、未マスクは無視
-    if(i>=0){ d.variables.splice(i,1); td.classList.remove('picked'); refreshVarList(); }
+    if(i>=0){ d.variables.splice(i,1); td.classList.remove('picked'); markDraftDirty(); refreshVarList(); }
     return;
   }
   if(mode==='select'){
@@ -2178,7 +2216,7 @@ function toggleCell(sheet,addr,val,td){
   // 鉛筆（追加）：未マスクなら追加。既にマスク済みならその項目を選択状態にする。
   if(i<0){
     const v={ key:uid(), sheet, addr, originalText:val, propName:'' };
-    d.variables.push(v); td.classList.add('picked'); td.dataset.key=v.key; refreshVarList();
+    d.variables.push(v); td.classList.add('picked'); td.dataset.key=v.key; markDraftDirty(); refreshVarList();
     selectVariableInList(v.key);
   }else{
     selectVariableInList(d.variables[i].key);
@@ -2230,6 +2268,7 @@ function removeVar(key){
   const d=state.draft;
   d.variables=d.variables.filter(v=>v.key!==key);
   if(d.groupSelection) d.groupSelection=d.groupSelection.filter(k=>k!==key);
+  markDraftDirty();
   if(d.fileType==='docx') renderDocxPreview(document.getElementById('previewBody'));
   else renderXlsxPreview(document.getElementById('previewBody'));
   applyGroupSelectionClassesToPreview();
@@ -2309,6 +2348,7 @@ function unshareVar(d, v){
   if(newName===oldName){ toast('元の項目名と同じです。別の項目名を入力してください', true); return; }
   v.propName=newName;
   syncGroupMemberName(d, v, oldName, newName);
+  markDraftDirty();
   refreshVarList();
   toast('この項目を独立させました');
 }
@@ -2339,6 +2379,7 @@ function commitPropNameChange(d, v, oldName, newValue, inp){
     // 元々他の項目と共有されていなかった場合は、確認なしでそのまま確定する
     v.propName=newName;
     syncGroupMemberName(d, v, oldName, newName);
+    markDraftDirty();
     refreshVarList();
     return;
   }
@@ -2347,11 +2388,13 @@ function commitPropNameChange(d, v, oldName, newValue, inp){
       v.propName=newName;
       syncGroupMemberName(d, v, oldName, newName);
       others.forEach(o=>{ o.propName=newName; syncGroupMemberName(d, o, oldName, newName); });
+      markDraftDirty();
       refreshVarList();
       toast('結合されている項目をすべて変更しました');
     }else if(choice==='onlyThis'){
       v.propName=newName;
       syncGroupMemberName(d, v, oldName, newName);
+      markDraftDirty();
       refreshVarList();
       toast('この項目だけ独立させました');
     }else{
@@ -2446,6 +2489,7 @@ function buildGroupCardEl(d, g, nameCounts){
   head.querySelector('.grp-ungroup').onclick=()=>{
     d.variables.forEach(v=>{ if(v.repeatGroupId===g.id){ v.repeatGroupId=null; v.repeatRole=null; } });
     d.repeatGroups=d.repeatGroups.filter(x=>x.id!==g.id);
+    markDraftDirty();
     refreshVarList();
   };
   if(expanded){
@@ -2535,6 +2579,7 @@ function mergeAsSharedValue(keys){
   if(!name) return;
   vars.forEach(v=>{ const oldName=v.propName; v.propName=name; syncGroupMemberName(d, v, oldName, name); });
   d.groupSelection=[];
+  markDraftDirty();
   refreshVarList();
   toast(`${vars.length}件を同じ値として結合しました`);
 }
@@ -2686,6 +2731,7 @@ function addAutoDetectedDocxVars(list, full){
     d.variables.push({ key:uid(), originalText:text, occurrence, propName: uniquePropName_(d, item.propName) });
     added++;
   });
+  if(added) markDraftDirty();
   renderDocxPreview(document.getElementById('previewBody'));
   applyMaskModeUI();
   refreshVarList();
@@ -2708,6 +2754,7 @@ function addAutoDetectedXlsxVars(list){
     d.variables.push({ key:uid(), sheet, addr, originalText:String(val), propName: uniquePropName_(d, item.propName) });
     added++;
   });
+  if(added) markDraftDirty();
   const body=document.getElementById('previewBody');
   if(body){
     body.querySelectorAll('td').forEach(td=>{
@@ -2731,6 +2778,7 @@ async function aiGenerateNames(){
     const items=buildNameContextItems(d);
     const { names }=await callAI('generatePropNames',{ items, texts:d.variables.map(v=>v.originalText) });
     d.variables.forEach((v,i)=>{ if(names[i]) v.propName=names[i]; });
+    markDraftDirty();
     loading(false); refreshVarList(); toast('項目名を生成しました');
   }catch(e){ loading(false); toast(e.message, true); }
 }
@@ -2800,6 +2848,7 @@ function saveTemplate(){
     saveTemplates();
     toast('フォーマットを保存しました');
   }
+  d.dirty=false;
   go('templates');
 }
 /* ============================================================
@@ -2815,7 +2864,7 @@ function saveTemplate(){
    ⑤出力時に、次回以降も使えるようフォーマットとして保存するか確認する
 ============================================================ */
 function startAiNewFlow(){
-  state.draft={ name:'', fileType:null, fileBase64:null, previewHtml:'', workbook:null, variables:[], repeatGroups:[], groupSelection:[], maskMode:'add', editId:null, source:'', image:null,
+  state.draft={ name:'', fileType:null, fileBase64:null, previewHtml:'', workbook:null, variables:[], repeatGroups:[], groupSelection:[], maskMode:'add', editId:null, source:'', image:null, dirty:false,
     role: state.companyProfile.defaultRole || '', selfLabel: state.companyProfile.defaultRole || '' };
   go('aiNewFormat');
 }

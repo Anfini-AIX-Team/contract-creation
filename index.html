@@ -198,6 +198,20 @@
   .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:12px 20px;border-radius:12px;font-size:14px;box-shadow:var(--shadow);z-index:200;opacity:0;transition:.25s;pointer-events:none}
   .toast.show{opacity:1;transform:translateX(-50%) translateY(-4px)}
   .toast.err{background:var(--danger)}
+  /* 画面全体の保存バー（右下固定。変更があるときだけ表示） */
+  .save-fab{position:fixed;right:24px;bottom:24px;z-index:200;display:flex;align-items:center;gap:8px}
+  .save-fab[hidden]{display:none}
+  .save-fab-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:40px;padding:0 18px;border-radius:999px;background:var(--brand);color:#fff;border:none;font-size:13px;font-weight:600;font-family:inherit;cursor:pointer;box-shadow:0 6px 16px rgba(17,24,39,0.18)}
+  .save-fab-btn:hover{filter:brightness(0.94)}
+  .save-fab-btn:disabled{opacity:0.6;cursor:not-allowed}
+  .save-fab-btn[hidden]{display:none}
+  .save-fab-status{display:inline-flex;align-items:center;gap:6px;height:40px;padding:0 14px;border-radius:999px;background:#fff;border:1px solid var(--border);color:var(--text-secondary);font-size:12px;font-weight:600;box-shadow:0 6px 16px rgba(17,24,39,0.12)}
+  .save-fab-status:empty{display:none}
+  .save-fab-status.dirty::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--text-muted);display:inline-block}
+  .save-fab-status.saved{color:#166534}
+  .save-fab-status.error{color:#991B1B}
+  .save-fab-space{height:88px}
+  @media (max-width:640px){.save-fab{right:16px;bottom:16px}}
   .backdrop{position:fixed;inset:0;background:rgba(20,22,28,.45);display:none;place-items:center;z-index:150;padding:20px}
   .backdrop.show{display:grid}
   .modal{background:var(--surface);border-radius:16px;max-width:640px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.3)}
@@ -277,6 +291,7 @@
 <div class="loading-overlay" id="loading"><div class="loading-box"><span class="spinner"></span><span id="loadingText">AIが処理しています…</span></div></div>
 <div class="backdrop" id="backdrop"></div>
 <div class="toast" id="toast"></div>
+<div class="save-fab" id="saveFab" hidden><span class="save-fab-status" id="saveFabStatus"></span><button type="button" class="save-fab-btn" id="saveFabBtn" onclick="saveTemplate()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>保存</button></div>
 <script>
 /* ============================================================
    GAS Web App URL（バックグラウンドに固定）
@@ -409,8 +424,11 @@ async function callAI(action, payload){
    ルーター
 ============================================================ */
 function confirmLeaveDraftIfDirty(){
-  if(state.draft && state.draft.dirty){
-    return confirm('保存されていない変更があります。このまま移動すると変更内容は失われます。移動してもよろしいですか？');
+  if(state.view==='templateNew' && state.draft && state.draft.dirty){
+    if(!confirm('保存していない変更があります。保存せずに移動しますか？')) return false;
+    // 破棄に同意したので、続く移動やbeforeunloadで二重に確認しない
+    state.draft.dirty=false;
+    updateSaveFab();
   }
   return true;
 }
@@ -419,6 +437,7 @@ function go(view, arg){
     if(!confirmLeaveDraftIfDirty()) return;
   }
   state.view=view; render(view, arg);
+  updateSaveFab();
   const app=document.getElementById('app');
   if(app) app.scrollTop=0;
 }
@@ -1130,16 +1149,59 @@ function viewHistory(app){
 /* ============================================================
    フォーマット保存フロー
 ============================================================ */
+// 保存対象（saveTemplateが書き出す内容）だけを直列化する。ファイル本体は大きいので別に参照比較する
+function draftSnapshot(d){
+  return JSON.stringify({
+    name:(d.name||'').trim(), fileType:d.fileType||null, role:d.role||'', selfLabel:(d.selfLabel||'').trim(),
+    variables:(d.variables||[]).map(v=>[ (v.propName||'').trim(), v.originalText, (v.occurrence??null), v.sheet||null, v.addr||null, v.repeatGroupId||null, v.repeatRole||null ]),
+    repeatGroups:(d.repeatGroups||[]).map(g=>[ g.id, g.kind, g.label, g.memberPropNames, g.anchorKey||null ])
+  });
+}
+function setDraftBaseline(d){
+  d.baseline={ snap:draftSnapshot(d), file:d.fileBase64||null };
+  d.dirty=false;
+}
+// 変更が入りうる操作のたびに呼ぶ。保存済みの状態と比べ直すので、元に戻せば未保存表示も消える
 function markDraftDirty(){
-  if(!state.draft) return;
-  state.draft.dirty = true;
-  const el=document.getElementById('dirtyBadge');
-  if(el) el.style.display='inline-flex';
+  const d=state.draft;
+  if(!d) return;
+  if(!d.baseline) setDraftBaseline(d);
+  d.dirty = (d.fileBase64||null)!==d.baseline.file || draftSnapshot(d)!==d.baseline.snap;
+  updateSaveFab();
+}
+let _saveFabSavedTimer=null;
+function updateSaveFab(){
+  const fab=document.getElementById('saveFab'); if(!fab) return;
+  const btn=document.getElementById('saveFabBtn'), st=document.getElementById('saveFabStatus');
+  if(state.view==='templateNew' && state.draft && state.draft.dirty){
+    if(_saveFabSavedTimer){ clearTimeout(_saveFabSavedTimer); _saveFabSavedTimer=null; }
+    st.className='save-fab-status dirty'; st.textContent='変更あり（未保存）';
+    btn.hidden=false; btn.disabled=false;
+    fab.hidden=false;
+  }else if(!_saveFabSavedTimer){
+    fab.hidden=true; st.textContent=''; st.className='save-fab-status';
+  }
+}
+function showSaveFabError(msg){
+  const fab=document.getElementById('saveFab'), btn=document.getElementById('saveFabBtn'), st=document.getElementById('saveFabStatus');
+  st.className='save-fab-status error'; st.textContent=msg;
+  btn.hidden=false; btn.disabled=false; fab.hidden=false;
+}
+// 保存成功のピル。画面遷移後も残るよう #app の外に置いてある
+function showSaveFabSaved(){
+  const fab=document.getElementById('saveFab'), btn=document.getElementById('saveFabBtn'), st=document.getElementById('saveFabStatus');
+  if(_saveFabSavedTimer) clearTimeout(_saveFabSavedTimer);
+  btn.hidden=true;
+  st.className='save-fab-status saved';
+  st.innerHTML='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>保存しました';
+  fab.hidden=false;
+  _saveFabSavedTimer=setTimeout(()=>{ _saveFabSavedTimer=null; updateSaveFab(); },2500);
 }
 function startTemplateNew(){
   if(!confirmLeaveDraftIfDirty()) return;
   state.draft={ name:'', fileType:null, fileBase64:null, previewHtml:'', workbook:null, variables:[], repeatGroups:[], groupSelection:[], maskMode:'add', editId:null, dirty:false,
     role: state.companyProfile.defaultRole || '', selfLabel: state.companyProfile.defaultRole || '' };
+  setDraftBaseline(state.draft);
   go('templateNew');
 }
 /* 既存フォーマットを編集用に読み込む（同じファイル・マスクを引き継いで再調整） */
@@ -1169,6 +1231,7 @@ async function startTemplateEdit(id){
       || d.variables.find(v=>v.repeatGroupId===g.id);
     g.anchorKey=anchorVar?anchorVar.key:null;
   });
+  setDraftBaseline(d);
   state.draft=d;
   try{
     loading(true,'フォーマットを読み込み中…');
@@ -1188,7 +1251,7 @@ function viewTemplateNew(app){
   const d=state.draft;
   const editing=!!d.editId;
   app.innerHTML = `
-    <h1 style="margin:0 0 6px;display:flex;align-items:center;gap:10px">フォーマットを${editing?'編集':'保存'}<span id="dirtyBadge" style="display:${d.dirty?'inline-flex':'none'};align-items:center;gap:4px;font-size:12px;font-weight:600;color:#92400E;background:#FFFBEB;border:1px solid #FDE68A;padding:3px 10px;border-radius:999px">${icon('alert',12)} 変更あり</span></h1>
+    <h1 style="margin:0 0 6px;display:flex;align-items:center;gap:10px">フォーマットを${editing?'編集':'保存'}</h1>
     <div class="field" style="max-width:520px;margin-top:22px">
       <label class="lbl section-heading">フォーマット名</label>
       <input type="text" id="tplName" placeholder="例：業務委託契約書" value="${esc(d.name)}">
@@ -1227,7 +1290,9 @@ function viewTemplateNew(app){
       <input type="file" id="replaceFileInput" accept=".docx,.xlsx" style="display:none">
     </div>`:''}
     <div id="maskArea" style="display:none;margin-top:24px"></div>
+    <div class="save-fab-space"></div>
   `;
+  if(!d.baseline) setDraftBaseline(d);
   document.getElementById('tplName').oninput=e=>{ d.name=e.target.value; markDraftDirty(); };
   document.getElementById('tplRole').onchange=e=>{
     d.role=e.target.value;
@@ -1323,7 +1388,6 @@ function buildMaskArea(){
           ${d.editId
             ? '<button class="btn ghost" onclick="go(\'templates\')">キャンセル</button>'
             : '<button class="btn ghost" onclick="if(confirmLeaveDraftIfDirty()) startTemplateNew()">やり直す</button>'}
-          <button class="btn" id="saveTplBtn">${d.editId?'上書き保存する':'このフォーマットを保存'}</button>
         </div>
       </div>
     </div>`;
@@ -1365,7 +1429,6 @@ function buildMaskArea(){
   applyMaskModeUI();
   document.getElementById('autoDetectBtn').onclick=aiAutoMask;
   document.getElementById('aiNameBtn').onclick=aiGenerateNames;
-  document.getElementById('saveTplBtn').onclick=saveTemplate;
   attachHResizer(document.getElementById('tplPreviewResizer'), document.getElementById('tplPreviewPane'), {
     min:340, max:1100, storageKey:'tplPreviewWidth'
   });
@@ -2820,10 +2883,11 @@ function buildNameContextItems(d){
 /* ---- ⑥ 保存 ---- */
 function saveTemplate(){
   const d=state.draft;
-  if(!d.name.trim()){ toast('フォーマット名を入力してください', true); return; }
-  if(!d.variables.length){ toast('最低1つはマスクしてください', true); return; }
+  // 入力不備は右下の保存バーに赤文字で出し、ボタンは押せるまま残す
+  if(!d.name.trim()){ showSaveFabError('フォーマット名を入力してください'); return; }
+  if(!d.variables.length){ showSaveFabError('最低1つはマスクしてください'); return; }
   const empty=d.variables.filter(v=>!v.propName.trim());
-  if(empty.length){ toast('すべての項目名を入力してください', true); return; }
+  if(empty.length){ showSaveFabError('すべての項目名を入力してください'); return; }
   // 項目名は繰り返しグループのメンバーも含めて自由に重複してOK。
   // 同じ項目名の箇所は「同じ変数」として扱われ、契約書作成時は1回の入力にまとまる
   // （グループ外の項目がグループのメンバー名と重複する場合は、そのグループの1件目の値が使われる）
@@ -2843,13 +2907,12 @@ function saveTemplate(){
     const idx=state.templates.findIndex(t=>t.id===d.editId);
     if(idx>=0) state.templates[idx]=record; else state.templates.push(record);
     saveTemplates();
-    toast('フォーマットを上書き保存しました');
   }else{
     state.templates.push(record);
     saveTemplates();
-    toast('フォーマットを保存しました');
   }
-  d.dirty=false;
+  setDraftBaseline(d);
+  showSaveFabSaved();
   go('templates');
 }
 /* ============================================================

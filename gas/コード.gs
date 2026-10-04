@@ -46,11 +46,11 @@
  *        → タスクの既定値（model があるときだけ）→ カテゴリの既定値
  * カテゴリ: VISION（画像・PDFを含む）/ STRUCTURED（JSON等の決まった形式を返す）
  */
-var GEMINI_DEFAULT_MODELS = { VISION: 'gemini-2.5-flash', STRUCTURED: 'gemini-2.5-flash' };
+var GEMINI_DEFAULT_MODELS = { VISION: 'gemini-3.5-flash-lite', STRUCTURED: 'gemini-3.5-flash-lite' };
 var GEMINI_TASKS = {
-  SUGGEST_VARIABLES:   { category: 'STRUCTURED' },  // suggestVariables_
+  SUGGEST_VARIABLES:   { category: 'STRUCTURED', model: 'gemini-3.5-flash' },  // suggestVariables_
   GENERATE_PROP_NAMES: { category: 'STRUCTURED' },  // generatePropNames_
-  EXTRACT_VALUES:      { category: 'VISION' },      // extractValues_（スクショ画像を含むことがある）
+  EXTRACT_VALUES:      { category: 'VISION', model: 'gemini-3.5-flash' },      // extractValues_（スクショ画像を含むことがある）
   LOOKUP_COMPANY:      { category: 'STRUCTURED' },  // lookupCompanyAi_（Google検索グラウンディング）
   GENERATE_FILENAME:   { category: 'STRUCTURED' }   // generateFilename_
 };

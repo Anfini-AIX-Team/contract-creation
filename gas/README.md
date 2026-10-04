@@ -34,8 +34,8 @@
 
 | タスク名 | カテゴリ | 既定モデル | 内容 |
 | --- | --- | --- | --- |
-| `SUGGEST_VARIABLES` | STRUCTURED | gemini-2.5-flash | 雛形（docx 本文 / xlsx セル）から可変部分を検出（`suggestVariables_`） |
-| `GENERATE_PROP_NAMES` | STRUCTURED | gemini-2.5-flash | マスク箇所の項目名を生成（`generatePropNames_`） |
-| `EXTRACT_VALUES` | VISION | gemini-2.5-flash | 情報ソース（文章・スクリーンショット画像）から各項目の値を抽出（`extractValues_`） |
-| `LOOKUP_COMPANY` | STRUCTURED | gemini-2.5-flash | gBizINFO で見つからない会社を Google 検索グラウンディングで調査（`lookupCompanyAi_`） |
-| `GENERATE_FILENAME` | STRUCTURED | gemini-2.5-flash | 出力ファイル名を生成（`generateFilename_`） |
+| `SUGGEST_VARIABLES` | STRUCTURED | gemini-3.5-flash | 雛形（docx 本文 / xlsx セル）から可変部分を検出（`suggestVariables_`） |
+| `GENERATE_PROP_NAMES` | STRUCTURED | gemini-3.5-flash-lite | マスク箇所の項目名を生成（`generatePropNames_`） |
+| `EXTRACT_VALUES` | VISION | gemini-3.5-flash | 情報ソース（文章・スクリーンショット画像）から各項目の値を抽出（`extractValues_`） |
+| `LOOKUP_COMPANY` | STRUCTURED | gemini-3.5-flash-lite | gBizINFO で見つからない会社を Google 検索グラウンディングで調査（`lookupCompanyAi_`） |
+| `GENERATE_FILENAME` | STRUCTURED | gemini-3.5-flash-lite | 出力ファイル名を生成（`generateFilename_`） |

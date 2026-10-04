@@ -41,7 +41,34 @@
  *    従来通りGemini（Google検索連携）にフォールバックする。
  *************************************************************/
 
-var MODEL = 'gemini-2.5-flash';  // 画像も扱えるモデル
+/*** Gemini モデル指定 ***
+ * 解決順: スクリプトプロパティ GEMINI_MODEL_<タスク名> → GEMINI_MODEL_<カテゴリ>
+ *        → タスクの既定値（model があるときだけ）→ カテゴリの既定値
+ * カテゴリ: VISION（画像・PDFを含む）/ STRUCTURED（JSON等の決まった形式を返す）
+ */
+var GEMINI_DEFAULT_MODELS = { VISION: 'gemini-2.5-flash', STRUCTURED: 'gemini-2.5-flash' };
+var GEMINI_TASKS = {
+  SUGGEST_VARIABLES:   { category: 'STRUCTURED' },  // suggestVariables_
+  GENERATE_PROP_NAMES: { category: 'STRUCTURED' },  // generatePropNames_
+  EXTRACT_VALUES:      { category: 'VISION' },      // extractValues_（スクショ画像を含むことがある）
+  LOOKUP_COMPANY:      { category: 'STRUCTURED' },  // lookupCompanyAi_（Google検索グラウンディング）
+  GENERATE_FILENAME:   { category: 'STRUCTURED' }   // generateFilename_
+};
+
+function geminiModel_(task) {
+  var t = GEMINI_TASKS[task];
+  if (!t) throw new Error('未定義のGeminiタスク: ' + task);
+  var props = PropertiesService.getScriptProperties();
+  return props.getProperty('GEMINI_MODEL_' + task)
+      || props.getProperty('GEMINI_MODEL_' + t.category)
+      || t.model
+      || GEMINI_DEFAULT_MODELS[t.category];
+}
+
+function geminiEndpoint_(task) {
+  return 'https://generativelanguage.googleapis.com/v1beta/models/'
+       + geminiModel_(task) + ':generateContent';
+}
 var GBIZ_API_BASE = 'https://api.info.gbiz.go.jp/hojin/v2/hojin';
 
 function getKey_() {
@@ -102,9 +129,8 @@ function json_(obj) {
 }
 
 /*** Gemini 呼び出し（JSONで返させる） ***/
-function callGemini_(parts) {
-  var url = 'https://generativelanguage.googleapis.com/v1beta/models/'
-          + MODEL + ':generateContent?key=' + getKey_();
+function callGemini_(parts, task) {
+  var url = geminiEndpoint_(task) + '?key=' + getKey_();
   var payload = {
     contents: [{ role: 'user', parts: parts }],
     generationConfig: { temperature: 0.2, responseMimeType: 'application/json' }
@@ -135,9 +161,8 @@ function parseJson_(text) {
  * （groundingMetadata.groundingChunks から抽出）。モデルが自己申告するURLより
  * 裏付けとして信頼できるため、可能な場合はこちらを優先して使う。
  */
-function callGeminiWithSearch_(parts) {
-  var url = 'https://generativelanguage.googleapis.com/v1beta/models/'
-          + MODEL + ':generateContent?key=' + getKey_();
+function callGeminiWithSearch_(parts, task) {
+  var url = geminiEndpoint_(task) + '?key=' + getKey_();
   var payload = {
     contents: [{ role: 'user', parts: parts }],
     tools: [{ google_search: {} }],
@@ -205,7 +230,7 @@ function generatePropNames_(p) {
     + '必ず入力と同じ順序・同じ個数で、文字列だけのJSON配列のみを返してください（説明文・コードブロック不要）。\n\n'
     + list;
 
-  var names = parseJson_(callGemini_([{ text: prompt }]));
+  var names = parseJson_(callGemini_([{ text: prompt }], 'GENERATE_PROP_NAMES'));
   return { names: names };
 }
 
@@ -264,7 +289,7 @@ function extractValues_(p) {
   if (p.imageBase64) {
     parts.push({ inlineData: { mimeType: p.imageMime || 'image/png', data: p.imageBase64 } });
   }
-  var result = parseJson_(callGemini_(parts));
+  var result = parseJson_(callGemini_(parts, 'EXTRACT_VALUES'));
   var standaloneArr = (result && result.standalone) || [];
   var values = {};
   vars.forEach(function (v, i) {
@@ -414,7 +439,7 @@ function lookupCompanyAi_(companyName) {
     + '"representative":"代表者名（分からなければ空文字）", "sourceUrl":"根拠にしたページのURL", '
     + '"sourceTitle":"根拠ページの簡単な説明"}, ...]}';
 
-  var geminiResult = callGeminiWithSearch_([{ text: prompt }]);
+  var geminiResult = callGeminiWithSearch_([{ text: prompt }], 'LOOKUP_COMPANY');
   var parsed;
   try {
     parsed = parseJson_(geminiResult.text);
@@ -478,7 +503,7 @@ function suggestVariables_(p) {
     parts = [{ text: prompt2 }];
   }
 
-  var arr = parseJson_(callGemini_(parts));
+  var arr = parseJson_(callGemini_(parts, 'SUGGEST_VARIABLES'));
   return { variables: arr };
 }
 
@@ -536,7 +561,7 @@ function generateFilename_(p) {
     + '出力は次の形式のJSONオブジェクトのみを返してください（説明文・コードブロック不要）:\n'
     + '{"filename": "拡張子なしのファイル名"}';
 
-  var result = parseJson_(callGemini_([{ text: prompt }]));
+  var result = parseJson_(callGemini_([{ text: prompt }], 'GENERATE_FILENAME'));
   var filename = (result && result.filename) ? String(result.filename) : templateName;
   // 万一AIが記号や制御文字、拡張子を含めてしまった場合に備えて、こちら側でも軽くサニタイズする
   filename = filename.replace(/\.(docx?|xlsx?)$/i, '');
